@@ -6,6 +6,7 @@ import time, win32con, win32api, win32gui
 import csv
 from sync_Client import SyncClient
 from enums import Regs, Machine, Alarms, OperatingTime, AbnormalSignAlarm, Coils, OnOffCheck
+from queue import Queue
 from PyQt5.QtCore import pyqtSlot
 
 
@@ -16,7 +17,10 @@ class MainWindow(QtWidgets.QWidget):
         self.init()
 
     def init(self):
-        self.kakaoName = ''
+        # 의정부, 검단
+        self.kakaoNameA = ''
+        # 부산, 청난
+        self.kakaoNameB = ''
         self.wechatName = ''
         self.connectList = []
         self.alarmList = []
@@ -26,6 +30,11 @@ class MainWindow(QtWidgets.QWidget):
         self.triger = False
         self.pushButton_OnOff.clicked.connect(lambda state, button=self.pushButton_OnOff : self.onoffButtonClick(state, button))
         self.schedule = False
+
+        # 부산, 청난을 제외한 나머지 사이트 
+        self.msgQueueA = Queue()
+        # 부산, 청난
+        self.msgQueueB = Queue()
 
         self.timer = QTimer(self) 
         self.timer.setInterval(10000)
@@ -41,7 +50,8 @@ class MainWindow(QtWidgets.QWidget):
         self.triger = not self.triger
         
         if(self.triger):
-            self.kakaoName = self.lineEdit_kakao.text()
+            self.kakaoNameA = self.lineEdit_kakao_A.text()
+            self.kakaoNameB = self.lineEdit_kakao_B.text()
             self.label_OnOff.setText("On")
             self.timer.start()
 
@@ -111,39 +121,42 @@ class MainWindow(QtWidgets.QWidget):
                 print("Get Alarm OnOff Error")
                 continue
             try:    
-             if(onoffCheck[0] != True):
+                if(onoffCheck[0] != True):
 
-                print("getAlarm")
-            
-                alarmData = self.plcConnect.readCoil(Machine.TERMOFCOIL.value * machine + Alarms.PANELEMERGENCYSTOP.value, Alarms.DONTUSE4.value)
-                for AlarmNum in Alarms:
+                    print("getAlarm")
+                
+                    alarmData = self.plcConnect.readCoil(Machine.TERMOFCOIL.value * machine + Alarms.PANELEMERGENCYSTOP.value, Alarms.DONTUSE4.value)
+                    for AlarmNum in Alarms:
 
-                    machineName = i[0]
+                        machineName = i[0]
 
-                    if(alarmData[AlarmNum.value]):
+                        if(alarmData[AlarmNum.value]):
 
-                         if(self.alarmCheck[machineName][AlarmNum.value]):
-                             # print(alarmData[k.value])
-                            self.alarmCheck[machineName][AlarmNum.value] = False
+                            if(self.alarmCheck[machineName][AlarmNum.value]):
+                                # print(alarmData[k.value])
+                                self.alarmCheck[machineName][AlarmNum.value] = False
 
-                            data['machineName'] = machineName
-                            data['alarm'] = str(self.alarmList[AlarmNum.value][1]) + ' ' + str(self.alarmList[AlarmNum.value][0])
-                            dataText = machineName + " " + str(self.alarmList[AlarmNum.value][1]) + ' ' + str(self.alarmList[AlarmNum.value][0])
-                            print(dataText)
-                            if(self.lineEdit_kakao.text() != ''):
-                                print("kakako chatroom open")
-                                print("kakao : " + self.kakaoName)
-                                self.open_chatroom(self.kakaoName)
-                                print("kakao send msg")
-                                self.kakao_sendtext(self.kakaoName, dataText)
-                                print("over")
-                                time.sleep(0.3)
-                          
-                    else:
-                        if(self.alarmCheck[machineName][AlarmNum.value] == False):
-                        
-                            self.alarmCheck[machineName][AlarmNum.value] = True
+                                data['machineName'] = machineName
+                                data['alarm'] = str(self.alarmList[AlarmNum.value][1]) + ' ' + str(self.alarmList[AlarmNum.value][0])
+                                dataText = machineName + " " + str(self.alarmList[AlarmNum.value][1]) + ' ' + str(self.alarmList[AlarmNum.value][0])
+                                print(dataText)
+                                
+                                if machineName == '청난': 
+                                    self.msgQueueB.put(dataText)
+                                elif machineName == '부산_A':
+                                    self.msgQueueB.put(dataText)
+                                else:
+                                    self.msgQueueA.put(dataText)
 
+
+
+                            
+                        else:
+                            if(self.alarmCheck[machineName][AlarmNum.value] == False):
+                            
+                                self.alarmCheck[machineName][AlarmNum.value] = True
+                                    
+                
                          
             except:
                 print("Alarm read error")
@@ -151,7 +164,24 @@ class MainWindow(QtWidgets.QWidget):
                  # self.alarmCheck.clear()
                  # self.alarmCheck = [True] * (Alarms.DONTUSE4.value + 1) 
                  # 
-            machine += 1                                           
+            machine += 1 
+
+        if self.msgQueueA.qsize() != 0:
+            print("kakako chatroom open A")
+            print("kakao : " + self.kakaoNameA)
+            self.open_chatroom(self.kakaoNameA)
+            print("kakao send msg")
+            self.kakao_sendtext(self.kakaoNameA, self.msgQueueA)
+            print("over")  
+
+        if self.msgQueueB.qsize() != 0:
+            print("kakako chatroom open B")
+            print("kakao : " + self.kakaoNameB)
+            self.open_chatroom(self.kakaoNameB)
+            print("kakao send msg")
+            self.kakao_sendtext(self.kakaoNameB, self.msgQueueB)
+            print("over")   
+                                                              
 
 # # 채팅방에 메시지 전송
     # # 엔터
@@ -163,22 +193,21 @@ class MainWindow(QtWidgets.QWidget):
         
 
     
-    def kakao_sendtext(self, chatroom_name, text):
+    def kakao_sendtext(self, chatroom_name, msg = 0):
         # # 핸들 _ 채팅방
         hwndMain = win32gui.FindWindow( None, chatroom_name)
         hwndEdit = win32gui.FindWindowEx( hwndMain, None, "RICHEDIT50W", None)
         # hwndListControl = win32gui.FindWindowEx( hwndMain, None, "EVA_VH_ListControl_Dblclk", None)
-
-        win32api.SendMessage(hwndEdit, win32con.WM_SETTEXT, 0, text)
+        while msg.qsize():
+            text = msg.get()
+            print("alarm " + text)
+            win32api.SendMessage(hwndEdit, win32con.WM_SETTEXT, 0, text)
+            time.sleep(0.2)
+            self.SendReturn(hwndEdit)
         
         # time.sleep(0.1)
 
-        self.SendReturn(hwndEdit)
-
         
-        
-
-
 
     # # 채팅방 열기s
     def open_chatroom(self,chatroom_name):
